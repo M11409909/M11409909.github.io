@@ -1,0 +1,493 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>M11409909 Matt資訊牆</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 100%; height: 100%; overflow: hidden; background: #000; font-family: "Segoe UI", "Microsoft JhengHei", sans-serif; }
+
+  #videoEl { display: none; }
+
+  canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
+  #cameraCanvas   { z-index: 1; }
+  #particleCanvas { z-index: 2; }
+
+  #titleBar {
+    position: absolute; top: 0; left: 0; right: 0; z-index: 10;
+    text-align: center; padding: 14px 0 10px;
+    background: linear-gradient(180deg, rgba(0,0,0,0.75), rgba(0,0,0,0));
+    pointer-events: none;
+  }
+  #titleBar h1 {
+    color: #fff; font-size: 34px; font-weight: 800; letter-spacing: 4px;
+    text-shadow: 0 0 18px rgba(0,200,255,0.9), 0 0 40px rgba(0,120,255,0.5);
+  }
+
+  #infoPanel {
+    position: absolute; left: 16px; bottom: 16px; z-index: 10;
+    background: rgba(0, 10, 25, 0.62);
+    border: 1px solid rgba(0, 200, 255, 0.45);
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: #d9f6ff; font-size: 15px; line-height: 1.75;
+    backdrop-filter: blur(6px);
+    min-width: 285px;
+    pointer-events: none;
+  }
+  #infoPanel .big { font-size: 20px; font-weight: 700; color: #ffffff; }
+  #infoPanel .label { color: #7fd8ff; }
+  #infoPanel .val { color: #ffffff; font-weight: 600; }
+
+  #statePanel {
+    position: absolute; right: 16px; bottom: 16px; z-index: 10;
+    background: rgba(0, 10, 25, 0.62);
+    border: 1px solid rgba(255, 170, 0, 0.45);
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: #ffe9c9; font-size: 15px; line-height: 1.75;
+    backdrop-filter: blur(6px);
+    min-width: 265px;
+    pointer-events: none;
+  }
+  #statePanel .label { color: #ffc46b; }
+  #statePanel .val { color: #ffffff; font-weight: 600; }
+  #handStateBig { font-size: 26px; font-weight: 800; }
+
+  #startOverlay {
+    position: absolute; inset: 0; z-index: 50;
+    background: rgba(0,0,0,0.88);
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    color: #fff; gap: 22px; text-align: center; padding: 20px;
+  }
+  #startOverlay h2 { font-size: 30px; letter-spacing: 3px; }
+  #startOverlay p  { color: #9fd8ff; font-size: 16px; line-height: 1.9; }
+  #startBtn {
+    font-size: 22px; font-weight: 700; letter-spacing: 2px;
+    padding: 16px 52px; border-radius: 40px; border: none; cursor: pointer;
+    color: #002; background: linear-gradient(135deg, #35e0ff, #4d7bff);
+    box-shadow: 0 0 30px rgba(53,224,255,0.55);
+  }
+  #startBtn:hover { transform: scale(1.05); }
+  #loadingMsg { color: #ffd36b; font-size: 15px; min-height: 22px; }
+</style>
+</head>
+<body>
+
+<video id="videoEl" autoplay playsinline muted></video>
+<canvas id="cameraCanvas"></canvas>
+<canvas id="particleCanvas"></canvas>
+
+<div id="titleBar"><h1>M11409909 Matt資訊牆</h1></div>
+
+<div id="infoPanel">
+  <div class="big" id="clockDate">----/--/--</div>
+  <div class="big" id="clockTime">--:--:--</div>
+  <div><span class="label">FPS：</span><span class="val" id="fpsVal">--</span></div>
+  <div><span class="label">人體偵測：</span><span class="val" id="poseVal">--</span></div>
+  <div><span class="label">手部偵測：</span><span class="val" id="handVal">--</span></div>
+</div>
+
+<div id="statePanel">
+  <div id="handStateBig">等待右手…</div>
+  <div><span class="label">張開程度：</span><span class="val" id="openVal">--</span></div>
+  <div><span class="label">手與螢幕距離：</span><span class="val" id="distVal">--</span></div>
+  <div><span class="label">目前形狀：</span><span class="val" id="shapeVal">--</span></div>
+  <div><span class="label">目前顏色：</span><span class="val" id="colorVal">--</span></div>
+  <div><span class="label">握合次數：</span><span class="val" id="gripCount">0</span></div>
+</div>
+
+<div id="startOverlay">
+  <h2>M11409909 Matt資訊牆</h2>
+  <p>
+    需要使用攝影機進行人體與手部偵測。<br>
+    右手 <b>握拳</b> → 粒子收縮，並切換「顏色 + 形狀」；右手 <b>張開</b> → 粒子放大發散。<br>
+    右手 <b>靠近螢幕</b> → 粒子範圍縮小；<b>遠離螢幕</b> → 粒子範圍變大。
+  </p>
+  <button id="startBtn">啟 動 攝 影 機</button>
+  <div id="loadingMsg"></div>
+</div>
+
+<script type="module">
+import { FilesetResolver, HandLandmarker, PoseLandmarker }
+  from "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs";
+
+/* ================= DOM ================= */
+const video       = document.getElementById("videoEl");
+const camCanvas   = document.getElementById("cameraCanvas");
+const camCtx      = camCanvas.getContext("2d");
+const pCanvas     = document.getElementById("particleCanvas");
+const pCtx        = pCanvas.getContext("2d");
+const loadingMsg  = document.getElementById("loadingMsg");
+const startBtn    = document.getElementById("startBtn");
+
+function resize() {
+  camCanvas.width  = pCanvas.width  = window.innerWidth;
+  camCanvas.height = pCanvas.height = window.innerHeight;
+}
+window.addEventListener("resize", resize);
+resize();
+
+/* ================= 時鐘 ================= */
+const weekNames = ["日","一","二","三","四","五","六"];
+function updateClock() {
+  const n = new Date();
+  const p = v => String(v).padStart(2, "0");
+  document.getElementById("clockDate").textContent =
+    `${n.getFullYear()}/${p(n.getMonth()+1)}/${p(n.getDate())} (週${weekNames[n.getDay()]})`;
+  document.getElementById("clockTime").textContent =
+    `${p(n.getHours())}:${p(n.getMinutes())}:${p(n.getSeconds())}`;
+}
+updateClock();
+setInterval(updateClock, 1000);
+
+/* ================= 骨架連線定義 ================= */
+const HAND_CONN = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[5,9],[9,10],
+  [10,11],[11,12],[9,13],[13,14],[14,15],[15,16],[13,17],[17,18],[18,19],[19,20],[0,17]];
+const POSE_CONN = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],
+  [23,25],[25,27],[24,26],[26,28],[27,29],[29,31],[28,30],[30,32],[27,31],[28,32],
+  [15,17],[15,19],[15,21],[16,18],[16,20],[16,22],[9,10],[0,4],[0,1],[1,2],[2,3],
+  [3,7],[4,5],[5,6],[6,8]];
+
+/* ================= 形狀（單位空間 -1~1） ================= */
+// 5 種形狀：愛心、星星 + 自選：花朵、蝴蝶、銀河漩渦
+const SHAPES = [
+  { name: "愛心 ❤", fn: t => {
+      const a = t * Math.PI * 2;
+      const x = 16 * Math.pow(Math.sin(a), 3);
+      const y = 13*Math.cos(a) - 5*Math.cos(2*a) - 2*Math.cos(3*a) - Math.cos(4*a);
+      return [x/17, -y/17];
+  }},
+  { name: "星星 ★", fn: t => {
+      const a = t * Math.PI * 2;
+      const k = 5;
+      const inner = 0.45;
+      const seg = (a * k / (2*Math.PI)) % 1;
+      const r = seg < 0.5 ? 1 - (1-inner)*(seg*2) : inner + (1-inner)*((seg-0.5)*2);
+      return [r * Math.sin(a), -r * Math.cos(a)];
+  }},
+  { name: "花朵 ✿", fn: t => {
+      const a = t * Math.PI * 2;
+      const r = 0.55 + 0.45 * Math.cos(5 * a);
+      return [r * Math.cos(a), r * Math.sin(a)];
+  }},
+  { name: "蝴蝶 🦋", fn: t => {
+      const a = t * Math.PI * 12;
+      const r = Math.exp(Math.cos(a)) - 2*Math.cos(4*a) + Math.pow(Math.sin(a/12), 5);
+      return [r * Math.sin(a) / 4, -r * Math.cos(a) / 4];
+  }},
+  { name: "銀河漩渦 🌀", fn: t => {
+      const arms = 3;
+      const arm = Math.floor(t * 997) % arms;
+      const d = (t * 997 * 7.13) % 1;
+      const a = d * Math.PI * 2.2 + arm * (Math.PI * 2 / arms);
+      const r = 0.12 + 0.88 * d;
+      return [r * Math.cos(a), r * Math.sin(a)];
+  }},
+];
+
+const COLORS = [
+  { name: "螢光紅",  main: "#ff3b5c" },
+  { name: "金黃",    main: "#ffd23b" },
+  { name: "翡翠綠",  main: "#2bff88" },
+  { name: "天空藍",  main: "#33b6ff" },
+  { name: "霓虹紫",  main: "#c04dff" },
+  { name: "橘橙",    main: "#ff8a2b" },
+  { name: "青碧",    main: "#00f5d4" },
+];
+
+/* ================= 粒子系統 ================= */
+const N_PARTICLES = 650;
+let shapeIdx = 0, colorIdx = 0, gripCounter = 0;
+
+const particles = [];
+for (let i = 0; i < N_PARTICLES; i++) {
+  particles.push({
+    t: i / N_PARTICLES,
+    x: window.innerWidth/2, y: window.innerHeight/2,
+    jx: (Math.random()-0.5), jy: (Math.random()-0.5),
+    phase: Math.random() * Math.PI * 2,
+    speed: 0.55 + Math.random() * 0.85,
+    size: 1.2 + Math.random() * 2.4,
+  });
+}
+
+/* 控制狀態（帶平滑） */
+const ctrl = {
+  cx: window.innerWidth/2, cy: window.innerHeight/2, // 粒子中心（跟隨右手）
+  openness: 1,       // 0=握拳 1=全開（平滑後）
+  rangeScale: 1,     // 由手距離控制（平滑後）
+  hasHand: false,
+  isClosed: false,   // 遲滯判斷用
+};
+
+function hexToRgb(hex) {
+  return [parseInt(hex.slice(1,3),16), parseInt(hex.slice(3,5),16), parseInt(hex.slice(5,7),16)];
+}
+
+function drawParticles(now) {
+  const W = pCanvas.width, H = pCanvas.height;
+
+  // 殘影淡出
+  pCtx.globalCompositeOperation = "destination-out";
+  pCtx.fillStyle = "rgba(0,0,0,0.22)";
+  pCtx.fillRect(0, 0, W, H);
+  pCtx.globalCompositeOperation = "lighter";
+
+  const shape = SHAPES[shapeIdx];
+  const [cr, cg, cb] = hexToRgb(COLORS[colorIdx].main);
+
+  const base = Math.min(W, H) * 0.30 * ctrl.rangeScale;
+  const radius = base * (0.18 + 1.05 * ctrl.openness); // 握拳縮小、張開放大
+  const scatter = ctrl.openness * base * 0.45;          // 張開時額外發散
+  const tSec = now / 1000;
+
+  for (const p of particles) {
+    const [ux, uy] = shape.fn(p.t);
+    const wob = Math.sin(tSec * p.speed * 2 + p.phase);
+    const tx = ctrl.cx + ux * radius + p.jx * scatter * (0.6 + 0.4 * wob);
+    const ty = ctrl.cy + uy * radius + p.jy * scatter * (0.6 + 0.4 * wob);
+
+    // 追隨目標（握拳時收得更快）
+    const ease = ctrl.openness < 0.3 ? 0.16 : 0.085;
+    p.x += (tx - p.x) * ease;
+    p.y += (ty - p.y) * ease;
+
+    const alpha = 0.55 + 0.45 * Math.sin(tSec * 3 + p.phase);
+    const sz = p.size * (0.7 + 0.6 * ctrl.openness);
+
+    pCtx.fillStyle = `rgba(${cr},${cg},${cb},${alpha.toFixed(3)})`;
+    pCtx.beginPath();
+    pCtx.arc(p.x, p.y, sz, 0, Math.PI * 2);
+    pCtx.fill();
+  }
+
+  // 中心光暈
+  const glow = pCtx.createRadialGradient(ctrl.cx, ctrl.cy, 0, ctrl.cx, ctrl.cy, radius * 0.6 + 30);
+  glow.addColorStop(0, `rgba(${cr},${cg},${cb},0.14)`);
+  glow.addColorStop(1, "rgba(0,0,0,0)");
+  pCtx.fillStyle = glow;
+  pCtx.beginPath();
+  pCtx.arc(ctrl.cx, ctrl.cy, radius * 0.6 + 30, 0, Math.PI * 2);
+  pCtx.fill();
+
+  pCtx.globalCompositeOperation = "source-over";
+}
+
+/* ================= 座標轉換（cover + 鏡像） ================= */
+function makeMapper() {
+  const W = camCanvas.width, H = camCanvas.height;
+  const vw = video.videoWidth || 640, vh = video.videoHeight || 480;
+  const s = Math.max(W / vw, H / vh);
+  const dx = (W - vw * s) / 2, dy = (H - vh * s) / 2;
+  return {
+    W, H, vw, vh, s, dx, dy,
+    // 鏡像後的螢幕座標
+    map(lm) { return [W - (lm.x * vw * s + dx), lm.y * vh * s + dy]; }
+  };
+}
+
+function drawSkeleton(m, landmarks, connections, lineColor, dotColor, dotR) {
+  camCtx.strokeStyle = lineColor;
+  camCtx.lineWidth = 3;
+  camCtx.beginPath();
+  for (const [a, b] of connections) {
+    if (!landmarks[a] || !landmarks[b]) continue;
+    const [x1, y1] = m.map(landmarks[a]);
+    const [x2, y2] = m.map(landmarks[b]);
+    camCtx.moveTo(x1, y1);
+    camCtx.lineTo(x2, y2);
+  }
+  camCtx.stroke();
+  camCtx.fillStyle = dotColor;
+  for (const lm of landmarks) {
+    const [x, y] = m.map(lm);
+    camCtx.beginPath();
+    camCtx.arc(x, y, dotR, 0, Math.PI * 2);
+    camCtx.fill();
+  }
+}
+
+/* ================= 手勢計算 ================= */
+const d2 = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+
+// 張開程度：四指指尖到手腕距離 / 手掌基準長度（手腕→中指根）
+function calcOpenness(lm) {
+  const palm = d2(lm[0], lm[9]) || 1e-6;
+  const tips = [8, 12, 16, 20];
+  let sum = 0;
+  for (const t of tips) sum += d2(lm[t], lm[0]) / palm;
+  const ratio = sum / 4;                       // 握拳約 0.9~1.2，張開約 1.8~2.1
+  return Math.max(0, Math.min(1, (ratio - 1.25) / (1.85 - 1.25)));
+}
+
+/* ================= MediaPipe 初始化 ================= */
+let handLandmarker = null, poseLandmarker = null;
+
+async function initModels() {
+  loadingMsg.textContent = "載入 MediaPipe 模型中…（第一次需要幾秒）";
+  const vision = await FilesetResolver.forVisionTasks(
+    "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/wasm");
+
+  handLandmarker = await HandLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numHands: 2
+  });
+
+  poseLandmarker = await PoseLandmarker.createFromOptions(vision, {
+    baseOptions: {
+      modelAssetPath: "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task",
+      delegate: "GPU"
+    },
+    runningMode: "VIDEO",
+    numPoses: 1
+  });
+}
+
+async function initCamera() {
+  loadingMsg.textContent = "開啟攝影機中…";
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 1280 }, height: { ideal: 720 } },
+    audio: false
+  });
+  video.srcObject = stream;
+  await new Promise(res => video.onloadedmetadata = res);
+  await video.play();
+}
+
+/* ================= 主迴圈 ================= */
+let lastVideoTime = -1;
+let frames = 0, fpsTime = performance.now();
+
+function loop(now) {
+  requestAnimationFrame(loop);
+
+  const m = makeMapper();
+
+  // --- 鏡像繪製攝影機畫面 ---
+  camCtx.save();
+  camCtx.clearRect(0, 0, m.W, m.H);
+  camCtx.translate(m.W, 0);
+  camCtx.scale(-1, 1);
+  camCtx.drawImage(video, m.dx, m.dy, m.vw * m.s, m.vh * m.s);
+  camCtx.restore();
+  // 暗色遮罩讓粒子更明顯
+  camCtx.fillStyle = "rgba(0,0,10,0.35)";
+  camCtx.fillRect(0, 0, m.W, m.H);
+
+  // --- 偵測 ---
+  let poseFound = false, handCount = 0, rightHand = null;
+
+  if (video.currentTime !== lastVideoTime) {
+    lastVideoTime = video.currentTime;
+
+    const poseRes = poseLandmarker.detectForVideo(video, now);
+    if (poseRes.landmarks && poseRes.landmarks.length > 0) {
+      poseFound = true;
+      drawSkeleton(m, poseRes.landmarks[0], POSE_CONN, "rgba(0,255,180,0.85)", "rgba(255,255,255,0.9)", 4);
+    }
+
+    const handRes = handLandmarker.detectForVideo(video, now + 0.001);
+    if (handRes.landmarks && handRes.landmarks.length > 0) {
+      handCount = handRes.landmarks.length;
+      for (let i = 0; i < handRes.landmarks.length; i++) {
+        const lm = handRes.landmarks[i];
+        const label = handRes.handednesses?.[i]?.[0]?.categoryName || "";
+        // 原始（未鏡像）影像中，使用者的「右手」通常被標為 Left
+        const isUserRight = (label === "Left");
+        drawSkeleton(m, lm, HAND_CONN,
+          isUserRight ? "rgba(255,200,0,0.95)" : "rgba(120,160,255,0.8)",
+          isUserRight ? "#ffdd55" : "#9db8ff", 5);
+        if (isUserRight || (handCount === 1 && !rightHand)) rightHand = lm;
+      }
+    }
+
+    // --- 右手控制 ---
+    if (rightHand) {
+      ctrl.hasHand = true;
+      const [hx, hy] = m.map(rightHand[9]);      // 掌心（中指根）
+      ctrl.cx += (hx - ctrl.cx) * 0.18;
+      ctrl.cy += (hy - ctrl.cy) * 0.18;
+
+      const rawOpen = calcOpenness(rightHand);
+      ctrl.openness += (rawOpen - ctrl.openness) * 0.25;
+
+      // 距離：手掌在畫面中的比例，越大＝越近 → 粒子範圍越小
+      const handSize = d2(rightHand[0], rightHand[9]); // 約 0.04(遠)~0.28(近)
+      const near = Math.max(0, Math.min(1, (handSize - 0.05) / (0.22 - 0.05)));
+      const targetRange = 1.35 - near * 1.05;          // 遠:1.35 → 近:0.30
+      ctrl.rangeScale += (targetRange - ctrl.rangeScale) * 0.12;
+
+      // 握合事件（遲滯）：合起來 → 換顏色 + 換形狀
+      if (!ctrl.isClosed && rawOpen < 0.18) {
+        ctrl.isClosed = true;
+        gripCounter++;
+        shapeIdx = (shapeIdx + 1) % SHAPES.length;
+        colorIdx = (colorIdx + 1 + Math.floor(Math.random() * (COLORS.length - 2))) % COLORS.length;
+        document.getElementById("gripCount").textContent = gripCounter;
+      } else if (ctrl.isClosed && rawOpen > 0.45) {
+        ctrl.isClosed = false;
+      }
+
+      // 螢幕文字
+      document.getElementById("handStateBig").textContent = ctrl.isClosed ? "✊ 右手：握合" : "🖐 右手：張開";
+      document.getElementById("handStateBig").style.color = ctrl.isClosed ? "#ff7b7b" : "#7bffb0";
+      document.getElementById("openVal").textContent = Math.round(ctrl.openness * 100) + " %";
+      document.getElementById("distVal").textContent =
+        near > 0.66 ? "很近（範圍小）" : near > 0.33 ? "中等" : "較遠（範圍大）";
+    } else {
+      ctrl.hasHand = false;
+      // 無手時回到畫面中央，緩慢呼吸
+      ctrl.cx += (m.W/2 - ctrl.cx) * 0.03;
+      ctrl.cy += (m.H/2 - ctrl.cy) * 0.03;
+      ctrl.openness += (0.6 + 0.25*Math.sin(now/1200) - ctrl.openness) * 0.05;
+      ctrl.rangeScale += (1 - ctrl.rangeScale) * 0.05;
+      document.getElementById("handStateBig").textContent = "等待右手…";
+      document.getElementById("handStateBig").style.color = "#aaccdd";
+      document.getElementById("openVal").textContent = "--";
+      document.getElementById("distVal").textContent = "--";
+    }
+
+    document.getElementById("poseVal").textContent = poseFound ? "✔ 偵測到 1 人" : "✘ 未偵測到";
+    document.getElementById("handVal").textContent =
+      handCount > 0 ? `✔ ${handCount} 隻手` : "✘ 未偵測到";
+    document.getElementById("shapeVal").textContent = SHAPES[shapeIdx].name;
+    const cEl = document.getElementById("colorVal");
+    cEl.textContent = "● " + COLORS[colorIdx].name;
+    cEl.style.color = COLORS[colorIdx].main;
+  }
+
+  // --- 粒子 ---
+  drawParticles(now);
+
+  // --- FPS ---
+  frames++;
+  if (now - fpsTime > 1000) {
+    document.getElementById("fpsVal").textContent = frames;
+    frames = 0;
+    fpsTime = now;
+  }
+}
+
+/* ================= 啟動 ================= */
+startBtn.addEventListener("click", async () => {
+  startBtn.disabled = true;
+  try {
+    await initModels();
+    await initCamera();
+    document.getElementById("startOverlay").style.display = "none";
+    requestAnimationFrame(loop);
+  } catch (err) {
+    loadingMsg.textContent = "啟動失敗：" + err.message + "（請確認已允許攝影機權限，並使用 Chrome / Edge）";
+    startBtn.disabled = false;
+    console.error(err);
+  }
+});
+</script>
+</body>
+</html>
