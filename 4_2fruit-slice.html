@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>雙手切水果</title>
+  <style>
+    *{box-sizing:border-box} body{margin:0;overflow:hidden;background:#060b14;color:#fff;font-family:"Microsoft JhengHei",system-ui,sans-serif}
+    #camera,#game{position:fixed;inset:0;width:100vw;height:100vh;display:block}#camera{z-index:0;object-fit:cover}#game{z-index:2;pointer-events:none}
+    #hud{position:fixed;z-index:4;inset:0;pointer-events:none;padding:clamp(16px,3vw,48px);display:flex;justify-content:space-between;align-items:flex-start;text-shadow:0 2px 6px #000}
+    h1{margin:0;font-size:clamp(25px,3vw,44px);letter-spacing:.08em}.sub{margin-top:7px;color:#b9e8ff;font-size:14px}.metric{padding:12px 19px;border:1px solid #8de7ff77;border-radius:15px;background:#061521a8;text-align:right;backdrop-filter:blur(8px)}.label{color:#91dff6;font-size:12px;letter-spacing:.14em}.value{font-size:clamp(31px,4vw,57px);font-weight:900;font-variant-numeric:tabular-nums}
+    #message{position:fixed;z-index:5;left:50%;top:50%;transform:translate(-50%,-50%);text-align:center;font-size:clamp(20px,3vw,36px);font-weight:800;text-shadow:0 3px 14px #000;pointer-events:none}.small{display:block;margin-top:10px;font-size:14px;font-weight:400;color:#d4e8f1}
+    #start{position:fixed;z-index:8;left:50%;top:64%;transform:translateX(-50%);border:1px solid #fff8;border-radius:999px;padding:15px 28px;background:#ff3f63;color:#fff;font:700 18px "Microsoft JhengHei",sans-serif;cursor:pointer;box-shadow:0 8px 30px #ff2e6688}#start:hover{background:#ff5a78}
+    #tips{position:fixed;z-index:4;bottom:22px;left:50%;transform:translateX(-50%);padding:8px 16px;border-radius:99px;background:#061521b8;color:#d5e6ee;font-size:13px;white-space:nowrap}
+  </style>
+</head>
+<body>
+  <video id="video" playsinline muted></video><canvas id="camera"></canvas><canvas id="game"></canvas>
+  <div id="hud"><div><h1>雙手切水果</h1><div class="sub">M11409909 吳家豪　｜　雙手揮動切水果，避開炸彈</div></div><div class="metric"><div class="label">分數　｜　連擊</div><div><span id="score" class="value">0</span><span style="font-size:22px">　x<span id="combo">0</span></span></div><div class="label">剩餘時間 <span id="time">60</span> 秒</div></div></div>
+  <div id="message">準備好了嗎？<span class="small">讓雙手進入鏡頭，揮動切開水果</span></div><button id="start">開始遊戲並啟用鏡頭</button><div id="tips">🍉 水果 +10　　💣 炸彈 −20　　雙手皆可切割</div>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script>
+  (()=>{
+    const W=1280,H=720,video=document.querySelector('#video'),cam=document.querySelector('#camera'),cctx=cam.getContext('2d'),game=document.querySelector('#game'),g=game.getContext('2d');cam.width=game.width=W;cam.height=game.height=H;
+    const scoreEl=document.querySelector('#score'),comboEl=document.querySelector('#combo'),timeEl=document.querySelector('#time'),msg=document.querySelector('#message'),btn=document.querySelector('#start');
+    let objects=[],slashes=[],hands={left:null,right:null},score=0,combo=0,playing=false,endAt=0,lastSpawn=0,lastFrame=0,latest=null;
+    const fruit=['🍉','🍊','🍎','🍐','🍓','🍋','🥝','🍑'];const rnd=(a,b)=>a+Math.random()*(b-a);
+    // 較大的向上初速，讓水果會飛到畫面上半部／接近頂端才落下。
+    function launch(){const bomb=Math.random()<.18;objects.push({x:rnd(120,W-120),y:H+90,vx:rnd(-2.6,2.6),vy:rnd(-24,-19),r:bomb?42:36,bomb,icon:bomb?'💣':fruit[(Math.random()*fruit.length)|0],spin:rnd(-.08,.08),a:0,dead:false});}
+    function hitObject(o,a,b){const dx=b.x-a.x,dy=b.y-a.y,l2=dx*dx+dy*dy;if(!l2)return Math.hypot(o.x-a.x,o.y-a.y)<o.r;let t=((o.x-a.x)*dx+(o.y-a.y)*dy)/l2;t=Math.max(0,Math.min(1,t));return Math.hypot(o.x-(a.x+t*dx),o.y-(a.y+t*dy))<o.r+11;}
+    function cut(o){o.dead=true;if(o.bomb){score=Math.max(0,score-20);combo=0;flash('💥 炸彈！ −20','#ff405a')}else{combo++;score+=10+Math.min(combo-1,10)*2;flash('+'+(10+Math.min(combo-1,10)*2),'#aaff70')}scoreEl.textContent=score;comboEl.textContent=combo;}
+    let noticeUntil=0,notice='',noticeColor='#fff';function flash(t,c){notice=t;noticeColor=c;noticeUntil=performance.now()+600;}
+    function updateHands(results){latest=results;for(const side of ['left','right']){const raw=side==='left'?results.leftHandLandmarks:results.rightHandLandmarks;if(!raw){hands[side]=null;continue}const p=raw[8],now={x:(1-p.x)*W,y:p.y*H};const prev=hands[side];if(prev){slashes.push({a:prev,b:now,life:1,color:side==='left'?'#40e9ff':'#ffcf46'});for(const o of objects)if(!o.dead&&hitObject(o,prev,now))cut(o)}hands[side]=now;}}
+    function drawHand(lm,color){if(!lm)return;const links=[[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20]];g.save();g.strokeStyle=color;g.fillStyle=color;g.lineWidth=3;g.shadowColor=color;g.shadowBlur=12;for(const [a,b]of links){g.beginPath();g.moveTo((1-lm[a].x)*W,lm[a].y*H);g.lineTo((1-lm[b].x)*W,lm[b].y*H);g.stroke()}for(const p of lm){g.beginPath();g.arc((1-p.x)*W,p.y*H,3,0,7);g.fill()}g.restore()}
+    function render(now){requestAnimationFrame(render);const dt=Math.min(32,now-lastFrame||16)/16.67;lastFrame=now;cctx.clearRect(0,0,W,H);if(latest){cctx.save();cctx.translate(W,0);cctx.scale(-1,1);cctx.drawImage(latest.image,0,0,W,H);cctx.restore();cctx.fillStyle='#00101d60';cctx.fillRect(0,0,W,H)}else{cctx.fillStyle='#061524';cctx.fillRect(0,0,W,H)}g.clearRect(0,0,W,H);
+      if(playing){if(now-lastSpawn>660){launch();lastSpawn=now}const remain=Math.max(0,Math.ceil((endAt-now)/1000));timeEl.textContent=remain;if(remain===0){playing=false;msg.innerHTML=`時間到！得分 ${score}<span class="small">按下方按鈕再玩一次</span>`;btn.textContent='再玩一次';btn.style.display='block'}objects.forEach(o=>{o.x+=o.vx*dt;o.y+=o.vy*dt;o.vy+=.48*dt;o.a+=o.spin*dt});objects=objects.filter(o=>!o.dead&&o.y<H+130);}
+      for(const o of objects){g.save();g.translate(o.x,o.y);g.rotate(o.a);g.font=`${o.r*1.65}px serif`;g.textAlign='center';g.textBaseline='middle';g.shadowColor=o.bomb?'#ff163c':'#fff';g.shadowBlur=16;g.fillText(o.icon,0,0);g.restore()}
+      slashes=slashes.filter(s=>(s.life-=.055)>0);for(const s of slashes){g.save();g.globalAlpha=s.life;g.strokeStyle=s.color;g.lineWidth=12*s.life;g.lineCap='round';g.shadowColor=s.color;g.shadowBlur=15;g.beginPath();g.moveTo(s.a.x,s.a.y);g.lineTo(s.b.x,s.b.y);g.stroke();g.restore()}
+      if(latest){drawHand(latest.leftHandLandmarks,'#40e9ff');drawHand(latest.rightHandLandmarks,'#ffd445')}if(now<noticeUntil){g.save();g.fillStyle=noticeColor;g.font='900 52px system-ui';g.textAlign='center';g.shadowColor='#000';g.shadowBlur=10;g.fillText(notice,W/2,H*.3);g.restore()}
+    }requestAnimationFrame(render);
+    btn.addEventListener('click',async()=>{try{if(!video.srcObject){const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:false});video.srcObject=stream;await video.play();const holistic=new Holistic({locateFile:f=>'https://cdn.jsdelivr.net/npm/@mediapipe/holistic/'+f});holistic.setOptions({modelComplexity:0,smoothLandmarks:true,enableSegmentation:false,minDetectionConfidence:.55,minTrackingConfidence:.55});holistic.onResults(updateHands);(async function loop(){await holistic.send({image:video});requestAnimationFrame(loop)})()}score=0;combo=0;objects=[];slashes=[];scoreEl.textContent='0';comboEl.textContent='0';playing=true;endAt=performance.now()+60000;lastSpawn=performance.now();msg.textContent='';btn.style.display='none'}catch(e){msg.innerHTML='無法使用攝影機<span class="small">請允許攝影機權限，並使用 localhost 或 HTTPS 開啟。</span>';console.error(e)}});
+  })();
+  </script>
+</body></html>
