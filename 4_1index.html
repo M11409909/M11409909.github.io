@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>M11409909 吳家豪資訊牆</title>
+  <style>
+    :root { color-scheme: dark; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; overflow: hidden; background: #050913; font-family: "Noto Sans TC", "Microsoft JhengHei", system-ui, sans-serif; color: #eaf7ff; }
+    #stage, #particles { position: fixed; inset: 0; width: 100vw; height: 100vh; display: block; }
+    #stage { z-index: 0; object-fit: cover; }
+    #particles { z-index: 2; pointer-events: none; }
+    .topbar { position: fixed; inset: 0 0 auto; z-index: 4; display: flex; justify-content: space-between; align-items: center; padding: clamp(14px, 2vw, 28px) clamp(18px, 4vw, 58px); pointer-events: none; background: linear-gradient(#030813d9, transparent); }
+    h1 { margin: 0; font-size: clamp(17px, 2.1vw, 31px); letter-spacing: .08em; font-weight: 700; text-shadow: 0 2px 16px #000; }
+    #clock { text-align: right; font-variant-numeric: tabular-nums; text-shadow: 0 2px 16px #000; }
+    #date { font-size: clamp(12px, 1.2vw, 18px); opacity: .78; }
+    #time { font-size: clamp(21px, 2.5vw, 39px); font-weight: 700; letter-spacing: .06em; }
+    .panel { position: fixed; bottom: clamp(15px, 3vw, 35px); z-index: 4; width: min(310px, calc(100vw - 34px)); padding: 14px 16px; border: 1px solid #91dfff55; border-radius: 12px; background: #061525a8; backdrop-filter: blur(10px); box-shadow: 0 10px 35px #0005; pointer-events: none; }
+    #status { left: clamp(17px, 3vw, 44px); }
+    #help { right: clamp(17px, 3vw, 44px); text-align: right; color: #c9e3ef; font-size: 13px; line-height: 1.65; }
+    .caption { font-size: 11px; letter-spacing: .16em; color: #83cfe9; }
+    #gesture { margin-top: 4px; font-size: 21px; font-weight: 800; }
+    #detail { color: #b7cfdb; font-size: 12px; margin-top: 3px; }
+    #start { position: fixed; z-index: 10; left: 50%; top: 50%; transform: translate(-50%, -50%); border: 1px solid #9eeaff; border-radius: 999px; padding: 15px 27px; background: #0a6685; color: white; font: inherit; font-weight: 700; font-size: 17px; cursor: pointer; box-shadow: 0 0 35px #00cbff88; }
+    #start:hover { background: #088db3; }
+    #error { display: none; position: fixed; z-index: 11; inset: 50% auto auto 50%; transform: translate(-50%,-50%); padding: 20px; border-radius: 10px; background: #3a1220; max-width: 90vw; text-align: center; }
+    @media (max-width: 620px) { #help { display: none; } .panel { padding: 10px 12px; } }
+  </style>
+</head>
+<body>
+  <video id="webcam" playsinline muted></video>
+  <canvas id="stage"></canvas><canvas id="particles"></canvas>
+  <header class="topbar"><h1>M11409909 吳家豪資訊牆</h1><div id="clock"><div id="date"></div><div id="time"></div></div></header>
+  <section id="status" class="panel"><div class="caption">MEDIAPIPE 偵測狀態</div><div id="gesture">等待右手…</div><div id="detail">人體：等待中　手部：等待中</div></section>
+  <section id="help" class="panel"><b>互動說明</b><br>右手張開：粒子發散<br>右手握拳：粒子收縮、換色換形<br>右手越靠近鏡頭：整體圖形越小</section>
+  <button id="start">啟用攝影機與資訊牆</button><div id="error"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/drawing_utils/drawing_utils.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@mediapipe/holistic/holistic.js"></script>
+  <script>
+  (() => {
+    const video = document.querySelector('#webcam'), canvas = document.querySelector('#stage'), ctx = canvas.getContext('2d');
+    const particleCanvas = document.querySelector('#particles'), pctx = particleCanvas.getContext('2d');
+    const gestureEl = document.querySelector('#gesture'), detailEl = document.querySelector('#detail'), start = document.querySelector('#start'), error = document.querySelector('#error');
+    const W = 1280, H = 720, count = 620;
+    canvas.width = W; canvas.height = H; particleCanvas.width = W; particleCanvas.height = H;
+    let particles = [], shapeIndex = 0, hue = 326, closed = false, wasClosed = false, handScale = .16, lastResults, hasPose = false, rightHand = null;
+    const shapes = ['愛心', '星星', '螺旋', '花朵', '六角星'];
+    const rand = (a,b) => a + Math.random()*(b-a);
+    function shapePoint(i, n, kind, size) {
+      const t = (i/n)*Math.PI*2, jitter = ((i * 37) % 11 - 5) * .45; let x,y;
+      if (kind === 0) { x = 16*Math.pow(Math.sin(t),3); y = -(13*Math.cos(t)-5*Math.cos(2*t)-2*Math.cos(3*t)-Math.cos(4*t)); x*=size/32; y*=size/32; }
+      else if (kind === 1) { const r = (i%2 ? .43 : 1) * size; x=r*Math.cos(t-Math.PI/2); y=r*Math.sin(t-Math.PI/2); }
+      else if (kind === 2) { const r=size*(.12+.88*i/n); x=r*Math.cos(t*4.3); y=r*Math.sin(t*4.3); }
+      else if (kind === 3) { const r=size*(.5+.5*Math.sin(t*5)); x=r*Math.cos(t); y=r*Math.sin(t); }
+      else { const r=size*(i%2 ? .48 : 1); x=r*Math.cos(t); y=r*Math.sin(t); }
+      return {x:x+jitter,y:y+jitter};
+    }
+    function resetParticles() { particles = Array.from({length:count}, (_,i) => ({ x: W/2+rand(-5,5), y:H/2+rand(-5,5), vx:0, vy:0, i, phase:rand(0,6.28) })); }
+    resetParticles();
+    function triggerChange() { shapeIndex=(shapeIndex+1)%shapes.length; hue=(hue+rand(103,196))%360; }
+    function handIsClosed(lm) {
+      // 指尖至手腕的距離，小於掌寬附近時視為握拳；拇指另行放寬。
+      const dist=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y);
+      const palm=dist(lm[5],lm[17]);
+      const curled=[8,12,16,20].filter(t=>dist(lm[t],lm[0]) < palm*1.55).length;
+      return curled >= 3;
+    }
+    function drawSkeleton(lm, connections, color, radius=3) {
+      pctx.strokeStyle=color; pctx.fillStyle=color; pctx.lineWidth=3;
+      pctx.shadowColor=color; pctx.shadowBlur=8;
+      for(const [a,b] of connections){ pctx.beginPath();pctx.moveTo((1-lm[a].x)*W,lm[a].y*H);pctx.lineTo((1-lm[b].x)*W,lm[b].y*H);pctx.stroke(); }
+      for(const p of lm){pctx.beginPath();pctx.arc((1-p.x)*W,p.y*H,radius,0,Math.PI*2);pctx.fill();}
+      pctx.shadowBlur=0;
+    }
+    function drawParticles() {
+      const scale = Math.max(.38, Math.min(1.2, .25/handScale)); // 手在鏡頭前較大（handScale↑）時，圖形縮小
+      const base = Math.min(W,H)*.24*scale;
+      pctx.save(); pctx.globalCompositeOperation='screen';
+      for (const p of particles) {
+        const target = closed ? {x:0,y:0} : shapePoint(p.i,count,shapeIndex,base);
+        const tx=W*.70+target.x, ty=H*.53+target.y;
+        p.vx=(p.vx+(tx-p.x)*.016)*.82; p.vy=(p.vy+(ty-p.y)*.016)*.82; p.x+=p.vx; p.y+=p.vy;
+        const light=58+(p.i%4)*8;
+        pctx.fillStyle=`hsla(${hue+(p.i%32)}, 100%, ${light}%, .98)`;
+        pctx.shadowColor=`hsl(${hue},100%,65%)`; pctx.shadowBlur=10;
+        pctx.beginPath();pctx.arc(p.x,p.y,2.2+(p.i%3)*.65,0,Math.PI*2);pctx.fill();
+      }
+      pctx.restore();
+      pctx.fillStyle=`hsla(${hue},100%,82%,1)`; pctx.font='700 18px system-ui'; pctx.textAlign='center';
+      pctx.shadowColor='#000';pctx.shadowBlur=6;pctx.fillText(shapes[shapeIndex], W*.70, H*.53 + base + 38);pctx.shadowBlur=0;
+    }
+    const poseLinks = [[11,12],[11,13],[13,15],[12,14],[14,16],[11,23],[12,24],[23,24],[23,25],[25,27],[24,26],[26,28],[27,31],[28,32]];
+    const handLinks = [[0,1],[1,2],[2,3],[3,4],[0,5],[5,6],[6,7],[7,8],[0,9],[9,10],[10,11],[11,12],[0,13],[13,14],[14,15],[15,16],[0,17],[17,18],[18,19],[19,20],[5,9],[9,13],[13,17]];
+    function onResults(results) {
+      lastResults=results; hasPose=!!results.poseLandmarks; rightHand=results.rightHandLandmarks || null;
+      const hand=rightHand;
+      if(hand) { closed=handIsClosed(hand); handScale=Math.hypot(hand[5].x-hand[17].x,hand[5].y-hand[17].y); }
+      else closed=false;
+      if(closed&&!wasClosed) triggerChange(); wasClosed=closed;
+    }
+    function render() {
+      ctx.clearRect(0,0,W,H);
+      pctx.clearRect(0,0,W,H);
+      if (lastResults) {
+        // 鏡像讓使用者看到的右手就是畫面右邊的右手。
+        ctx.save();ctx.translate(W,0);ctx.scale(-1,1);ctx.drawImage(lastResults.image,0,0,W,H);ctx.restore();
+        ctx.fillStyle='#02111a88';ctx.fillRect(0,0,W,H);
+        if(hasPose) drawSkeleton(lastResults.poseLandmarks,poseLinks,'#59e3ff',3);
+        if(rightHand) drawSkeleton(rightHand,handLinks,'#ffd65a',4);
+      } else {
+        const bg=ctx.createRadialGradient(W*.7,H*.5,10,W*.7,H*.5,W*.8); bg.addColorStop(0,'#12334c'); bg.addColorStop(1,'#030712'); ctx.fillStyle=bg;ctx.fillRect(0,0,W,H);
+        ctx.fillStyle='#b7e8ff';ctx.font='500 18px system-ui';ctx.textAlign='center';ctx.fillText('粒子系統已就緒，請啟用攝影機',W*.5,H*.5+210);
+      }
+      drawParticles();
+      const hand=rightHand;
+      const mode=hand ? (closed ? '✊ 握拳：粒子收縮' : '🖐 張開：粒子發散') : '等待右手…';
+      gestureEl.textContent=mode;
+      detailEl.textContent=`人體：${hasPose?'已偵測':'未偵測'}　手部：${hand?'右手已偵測':'未偵測'}　圖形：${shapes[shapeIndex]}`;
+      requestAnimationFrame(render);
+    }
+    function tickClock(){ const now=new Date(); document.querySelector('#date').textContent=new Intl.DateTimeFormat('zh-TW',{year:'numeric',month:'long',day:'numeric',weekday:'long'}).format(now); document.querySelector('#time').textContent=now.toLocaleTimeString('zh-TW',{hour12:false}); } tickClock();setInterval(tickClock,1000);
+    render();
+    start.addEventListener('click', async () => {
+      try {
+        const holistic=new Holistic({locateFile:f=>`https://cdn.jsdelivr.net/npm/@mediapipe/holistic/${f}`});
+        holistic.setOptions({modelComplexity:1,smoothLandmarks:true,enableSegmentation:false,refineFaceLandmarks:false,minDetectionConfidence:.55,minTrackingConfidence:.55}); holistic.onResults(onResults);
+        const stream=await navigator.mediaDevices.getUserMedia({video:{width:{ideal:1280},height:{ideal:720},facingMode:'user'},audio:false}); video.srcObject=stream; await video.play();
+        start.remove();
+        async function loop(){ if(video.readyState>=2) await holistic.send({image:video}); requestAnimationFrame(loop); } loop();
+      } catch(e) { error.style.display='block'; error.textContent='無法啟用攝影機：請允許瀏覽器使用攝影機，並以 localhost 或 HTTPS 開啟此頁面。'; start.style.display='none'; console.error(e); }
+    });
+  })();
+  </script>
+</body>
+</html>
